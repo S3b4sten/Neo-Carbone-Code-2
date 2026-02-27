@@ -6,6 +6,9 @@ All tuneable knobs live here; override via environment variables.
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()  # loads .env from the project root if it exists
+
 # ── LLM ────────────────────────────────────────────────────────────────────────
 MODEL: str = os.environ.get("AGENT_MODEL", "gpt-4o-mini")
 OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
