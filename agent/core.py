@@ -115,7 +115,10 @@ def _build_system_prompt(evolver: Evolver, long_term_memory) -> str:
         ## Verifying code
         - `workspace_code_reviewer` VERDICT: PASS means the file is correct — call `subtask_complete`.
         - For non-GUI scripts: run with `shell` or `python_eval` and check the output.
-        - For GUI programs (Pygame, Tkinter, etc.) or interactive games (connect4, snake, etc. that call `input()` in a loop): do not run them — they will hang forever. A reviewer PASS is sufficient proof. The user will run it manually.
+        - For GUI programs (Pygame, Tkinter, etc.): after the reviewer PASS, run a headless smoke test to catch runtime crashes (AttributeError, NameError, etc.):
+          Use `extended_timeout_shell` with `timeout=2` and command `python workspace/FILENAME.py`.
+          Interpret the result: "Command timed out" = game started successfully (timeout is expected and means PASS). Any Python traceback in the output = crash, fix it before proceeding.
+        - For interactive console games (connect4, chess, etc. that call `input()` in a loop): do not run them — they will block forever. A reviewer PASS is sufficient proof. The user will run it manually.
         - For simple non-interactive scripts with a single `input()` call (e.g. a calculator asking for one number): pipe sample input. Example: `echo 5 | python workspace/script.py`
 
         ## When stuck
@@ -361,6 +364,7 @@ class SelfEvolvingAgent:
                             goal=goal,
                             subtask=f"Full goal: {goal}",
                             evidence=evidence,
+                            final=True,
                         )
 
                         if critique["pass"]:

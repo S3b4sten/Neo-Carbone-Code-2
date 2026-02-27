@@ -105,10 +105,17 @@ SUB-TASKS EXECUTED: {subtasks}
 TOOLS ALREADY AVAILABLE: {available_tools}
 PREVIOUSLY SYNTHESIZED TOOLS: {existing_synth}
 
-Only suggest synthesis if:
+Only suggest synthesis if ALL of these are true:
 - The same multi-step action would clearly repeat across many future requests.
 - No existing tool already covers it.
 - A tool would genuinely save 3+ steps next time.
+- The tool performs a UTILITY function (file analysis, API calls, data transforms) — NOT code generation.
+
+NEVER synthesize tools that:
+- Generate game code (snake_game_creator, connect4_game_creator, etc.)
+  → These are too specific, become outdated, and the agent writes better code directly.
+- Are just thin wrappers around write_file for a particular task.
+  → The agent should write code itself using write_file, not delegate to a tool.
 
 Respond with ONLY one JSON object:
 {{"synthesize": true,  "name": "<snake_case>", "description": "<one sentence>", "use_case": "<concrete example of when to use it>"}}
@@ -191,6 +198,7 @@ class Evolver:
         goal: str,
         subtask: str,
         evidence: str,
+        final: bool = False,
     ) -> dict:
         """
         Ask the LLM to verify whether the sub-task output actually satisfies
@@ -198,6 +206,8 @@ class Evolver:
 
         Fast-path: if workspace_code_reviewer already returned VERDICT: PASS,
         skip the LLM call entirely and return pass=True immediately.
+        Exception: when final=True (called from task_complete), always run the
+        LLM so it can verify the whole goal was met — not just syntax/patterns.
 
         Returns:
             {"pass": bool, "issues": str, "suggestions": str}
@@ -205,8 +215,10 @@ class Evolver:
         import json
 
         # ── Fast-path: trust workspace_code_reviewer PASS ─────────────────────
-        # If the reviewer already ran and passed, no LLM judgment is needed.
-        if "VERDICT: PASS" in evidence:
+        # Only for per-subtask checks. Final (task_complete) always goes to LLM
+        # so it can verify goal-level requirements (e.g. "using pygame" means
+        # pygame must actually be imported, not just any passing syntax check).
+        if not final and "VERDICT: PASS" in evidence:
             return {
                 "pass": True,
                 "issues": "",

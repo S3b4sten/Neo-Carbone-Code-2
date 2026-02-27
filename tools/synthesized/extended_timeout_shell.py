@@ -36,7 +36,12 @@ class ExtendedTimeoutShell(BaseTool):
 
         command = kwargs.get("command")
         timeout = min(kwargs.get("timeout", 15), _MAX_TIMEOUT)  # never exceed hard cap
-        cwd = kwargs.get("cwd")
+        cwd = kwargs.get("cwd") or str(config.WORKSPACE_DIR)
+
+        import os
+        env = os.environ.copy()
+        env["SDL_VIDEODRIVER"] = "dummy"
+        env["SDL_AUDIODRIVER"] = "dummy"
 
         try:
             result = subprocess.run(
@@ -44,7 +49,8 @@ class ExtendedTimeoutShell(BaseTool):
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=cwd
+                cwd=cwd,
+                env=env,
             )
             if result.returncode == 0:
                 return result.stdout
