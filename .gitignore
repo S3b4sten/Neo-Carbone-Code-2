@@ -10,3 +10,5 @@ logs/
 __pycache__
 
 /memory/long_term.json
+
+synthesized/
