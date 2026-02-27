@@ -23,9 +23,11 @@ PLANNING PRINCIPLES:
 3. Only split into more sub-tasks when files are genuinely large (>150 lines) or multi-file projects.
 4. Each sub-task writes the COMPLETE file — never plan incremental "add a function" passes on the
    same file, because each pass rewrites from scratch and wastes time.
-5. NEVER plan to run GUI programs (pygame, tkinter, etc.) — they block the terminal forever.
-   Instead, use a "Static review with workspace_code_reviewer" sub-task as the final check.
-6. For non-GUI scripts (CLI tools, data processing etc.), plan a "Run and verify output" sub-task.
+5. NEVER plan to run programs that require user interaction — they will block the terminal forever:
+   - GUI programs: pygame, tkinter, wx, etc.
+   - Interactive games: connect4, snake, chess, etc. (anything that calls input() in a loop)
+   For these, use a "Static review with workspace_code_reviewer" sub-task as the final check.
+6. For fully non-interactive scripts (data processing, CLI utilities that run to completion on their own), plan a "Run and verify output" sub-task.
 7. Install missing packages as the FIRST sub-task if needed.
 8. For multi-file projects, plan one sub-task per file, then a review sub-task at the end.
 
@@ -36,10 +38,16 @@ EXAMPLE plan for "make a flappy bird game in pygame":
   "Static review: call workspace_code_reviewer on flappy_bird.py to verify all required patterns are present"
 ]
 
-EXAMPLE plan for "write a christmas tree script":
+EXAMPLE plan for "write a christmas tree script" (non-interactive, runs to completion):
 [
   "Write complete christmas_tree.py: tree and trunk functions, input validation, main function",
-  "Run and verify: execute christmas_tree.py and check output"
+  "Run and verify: execute christmas_tree.py with piped input (echo 5 | python workspace/christmas_tree.py)"
+]
+
+EXAMPLE plan for "write a connect4 game" (interactive — blocks on input()):
+[
+  "Write complete connect4.py: board, player turns, win detection, main loop",
+  "Static review: call workspace_code_reviewer on connect4.py to verify all required patterns"
 ]
 
 CONTEXT (lessons learned and synthesized tools available):
