@@ -115,8 +115,8 @@ def _build_system_prompt(evolver: Evolver, long_term_memory) -> str:
         ## Verifying code
         - `workspace_code_reviewer` VERDICT: PASS means the file is correct — call `subtask_complete`.
         - For non-GUI scripts: run with `shell` or `python_eval` and check the output.
-        - For GUI programs (Pygame, Tkinter, etc.): do not run them — they will hang. A reviewer PASS is sufficient proof. The user will run it manually.
-        - For scripts that use `input()`: pipe sample input so they don't hang. Example: `echo 5 | python workspace/script.py`
+        - For GUI programs (Pygame, Tkinter, etc.) or interactive games (connect4, snake, etc. that call `input()` in a loop): do not run them — they will hang forever. A reviewer PASS is sufficient proof. The user will run it manually.
+        - For simple non-interactive scripts with a single `input()` call (e.g. a calculator asking for one number): pipe sample input. Example: `echo 5 | python workspace/script.py`
 
         ## When stuck
         - If a required library is missing, run `pip_install` first.
