@@ -185,7 +185,10 @@ class WorkspaceCodeReviewer(BaseTool):
         found: list[str] = []
         for pattern in required_patterns:
             try:
-                matches = bool(re.search(pattern, source))
+                # Also try literal match: patterns like `print(line)` are valid
+                # regex but `(line)` is a capture group — the regex never matches
+                # the actual text `print(line)`. The literal fallback catches this.
+                matches = bool(re.search(pattern, source)) or (pattern in source)
             except re.error:
                 matches = pattern in source
             (found if matches else missing).append(pattern)
