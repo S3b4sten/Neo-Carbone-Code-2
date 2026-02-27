@@ -1,0 +1,10 @@
+*.log
+logs/
+
+/workspace
+
+/__pycache__
+
+__pycache__
+
+/memory/long_term.json
