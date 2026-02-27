@@ -178,8 +178,10 @@ class Evolver:
                 max_tokens=200,
             )
             hint = response.choices[0].message.content.strip()
-            # Also persist as a lesson so future runs benefit
-            self.ltm.add_lesson(f"[From error in '{tool_name}'] {hint}")
+            # Do NOT persist every transient error as a lesson — that floods
+            # long-term memory with session-specific noise.  A lesson is only
+            # worth saving when the same error has genuinely recurred (the
+            # caller handles that at the escalation threshold).
             return hint
         except Exception as exc:
             return f"(reflection failed: {exc})"
@@ -211,14 +213,15 @@ class Evolver:
                 "suggestions": "(auto-passed: workspace_code_reviewer returned VERDICT: PASS)",
             }
 
-        # ── Fast-path: detect GUI timeout — always pass for GUI apps ──────────
-        _gui_timeout_signals = [
-            "GUI/Blocking: YES",
-            "timed out",
-            "Timeout",
-            "blocking call",
-        ]
-        if any(sig in evidence for sig in _gui_timeout_signals):
+        # ── Fast-path: detect GUI timeout — only pass when the reviewer
+        # confirmed the file IS a GUI/blocking program.  A bare "timed out"
+        # from shell/python_eval is NOT sufficient: a non-GUI script with an
+        # infinite-loop bug also times out, and that timeout IS the bug.
+        # Only the reviewer's explicit "GUI/Blocking: YES" is a reliable signal.
+        # A bare timeout from shell/python_eval on a broken non-GUI script must
+        # fall through to LLM judgment — the timeout may itself be the bug.
+        is_confirmed_gui = "GUI/Blocking: YES" in evidence
+        if is_confirmed_gui:
             return {
                 "pass": True,
                 "issues": "",
@@ -234,7 +237,12 @@ class Evolver:
                         "content": _SELF_CRITIQUE_PROMPT.format(
                             goal=goal[:500],
                             subtask=subtask[:300],
-                            evidence=evidence[:2000],
+                            # 6000 chars: enough for a full reviewer report
+                            # (syntax context + patterns + VERDICT) plus several
+                            # other tool results.  The old 2000-char limit meant
+                            # a large reviewer output could crowd out everything
+                            # else, or even truncate the VERDICT line itself.
+                            evidence=evidence[:6000],
                         ),
                     }
                 ],

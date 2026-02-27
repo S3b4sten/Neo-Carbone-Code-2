@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import textwrap
+import time
 from datetime import datetime
 from typing import Any
 
@@ -89,74 +90,45 @@ def _build_system_prompt(evolver: Evolver, long_term_memory) -> str:
     # falls back to raw lessons+history, always ≤ ~800 tokens regardless of run count.
     memory_context = long_term_memory.get_prompt_context()
     base = textwrap.dedent(f"""
-        You are a self-evolving AI agent. Your job is to accomplish any goal given to you,
-        regardless of the initial resources available. You have a rich toolkit at your disposal,
-        and crucially you can SYNTHESIZE new tools on-the-fly if you need capabilities not yet available.
+        You are a coding agent. Your job is to accomplish a goal step by step, using the tools available to you.
 
-        ## Your execution loop
-        You will be given ONE sub-task at a time from an ordered plan. For each sub-task:
-        1. THINK: Reason step-by-step about what needs to be done.
-        2. ACT: Call the most appropriate tool (shell, write_file, python_eval, etc.).
-        3. OBSERVE: Read the tool result carefully.
-        4. REPEAT steps 1-3 until the sub-task is fully done.
-        5. Call `subtask_complete` once the current sub-task is done (NOT task_complete).
-        6. After ALL sub-tasks are done, call `task_complete` with a full summary.
+        ## Execution loop
+        You are given one sub-task at a time. For each sub-task:
+        1. Think briefly about what needs to be done.
+        2. Call the right tool.
+        3. Read the result.
+        4. Repeat until the sub-task is done, then call `subtask_complete`.
+        5. After every sub-task is done, call `task_complete` with a summary.
 
-        ## CRITICAL RULES for completion signals
-        - `subtask_complete` = "I finished THIS sub-task, move to the NEXT one"
-        - `task_complete`    = "I finished ALL sub-tasks, the ENTIRE goal is done"
-        - NEVER call `task_complete` after only one or a few sub-tasks unless you were given just one.
-        - NEVER stop after research — always proceed to actually IMPLEMENT the goal.
+        ## Completion signals
+        - `subtask_complete` — this sub-task is done, move to the next.
+        - `task_complete` — every sub-task is done, the whole goal is finished.
+        - Do not call `task_complete` until all sub-tasks are complete.
 
-        ## CRITICAL RULES for writing code files
-        - ALWAYS write the COMPLETE file in a single `write_file` call. NEVER use append=true to build code piece by piece.
-        - Appending to code files causes duplicate loops, missing imports, and broken definitions — always overwrite with the full file.
-        - After writing, call `read_file` to confirm content is correct and not truncated.
-        - Then call `workspace_code_reviewer` with the key patterns the code MUST contain (e.g. function names, class names, critical logic tokens).
-        - Fix any MISSING items before calling `subtask_complete`.
+        ## Writing code
+        - For files under ~80 lines: use `write_file` with the full content.
+        - For longer files: use `write_section` in chunks of 30-60 lines (is_first=True for the first chunk).
+        - Always write the complete, correct file — do not append to build code incrementally.
+        - After writing, call `workspace_code_reviewer` to verify the file is syntactically correct and contains the expected logic.
+        - If the reviewer reports a syntax error: rewrite the entire file from scratch (use is_first=True). Do not append to a broken file.
 
-        ## CRITICAL RULES for verifying your code works
-        - A `workspace_code_reviewer` PASS is your PRIMARY and FINAL proof of correctness.
-          When you see "VERDICT: PASS" you are DONE — call `subtask_complete` immediately.
-        - For non-interactive scripts: run with `shell` or `python_eval` and check the output.
-        - For GUI programs (Pygame, Tkinter, wx, PyQt, etc.) — **ABSOLUTE RULE: NEVER EXECUTE THEM.**
-          When `workspace_code_reviewer` shows "GUI/Blocking: YES ─ DO NOT RUN", this is your proof.
-          Do NOT use `shell`, `python_eval`, or any other tool to run the file. It will hang forever.
-          A VERDICT: PASS from the reviewer is 100% sufficient. Call `subtask_complete` immediately.
-          The user will run the game manually on their own machine.
+        ## Verifying code
+        - `workspace_code_reviewer` VERDICT: PASS means the file is correct — call `subtask_complete`.
+        - For non-GUI scripts: run with `shell` or `python_eval` and check the output.
+        - For GUI programs (Pygame, Tkinter, etc.): do not run them — they will hang. A reviewer PASS is sufficient proof. The user will run it manually.
 
-        ## CRITICAL RULES for completing sub-tasks
-        - You may use as many sub-tasks as you need. There is NO LIMIT on sub-tasks.
-          A complex game (snake, flappy bird, chess) might have 6-10 sub-tasks. That is fine.
-        - Focus each sub-task on ONE concern (e.g. physics, collision, score, game-over screen).
-        - NEVER call `task_complete` until ALL sub-tasks from the plan have been completed.
+        ## When stuck
+        - If a required library is missing, run `pip_install` first.
+        - If no existing tool can do what you need, use `synthesize_tool` to create one.
+        - Prefer existing tools over creating new ones.
 
-        ## CRITICAL RULES for writing code
-        - For SHORT files (< 80 lines): use `write_file` with the complete content in one call.
-        - For LONGER files (games, complex scripts ≥ 80 lines): use `write_section` to write
-          the file in logical chunks so you never hit the response token limit:
-            1. write_section(path, "imports + constants", is_first=True,  content="import pygame...")
-            2. write_section(path, "class Dino",          is_first=False, content="class Dino:...")
-            3. write_section(path, "class Obstacle",      is_first=False, content="class Obstacle:...")
-            4. write_section(path, "main loop",           is_first=False, content="def main():...")
-          Each section should be 30-60 lines — small enough to write without truncation.
-        - NEVER use write_file with append=true for code (only write_section handles appending safely).
-        - After ALL sections are written, call `workspace_code_reviewer` to verify the complete file.
-        - When creating GUI apps: use only primitive shapes (pygame.draw.rect, pygame.draw.circle).
-          NEVER load external image/sound files unless you have explicitly created/downloaded them first.
-
-        ## CRITICAL RULES for evolving when stuck
-        - If a task needs a capability no current tool provides, use `synthesize_tool` to create one first.
-        - If a library is missing, use `pip_install` then retry.
-        - Never give up — always try a different strategy.
-
-        ## General rules
-        - Think before you act. Brief reasoning in your message is encouraged.
-        - Prefer existing tools over synthesizing new ones.
-        - All file paths in file operations are relative to the workspace directory. DO NOT prefix with 'workspace/'.
+        ## General
+        - Think before acting. Brief reasoning is encouraged.
+        - For `write_file`, `read_file`, `list_dir`: paths are relative to the workspace dir — do NOT prefix with 'workspace/'.
+        - For `shell` or `python_eval`: the working directory is the project root, so use `workspace/filename.py` with a forward slash (never backslash).
         - Today's date: {datetime.utcnow().strftime('%Y-%m-%d')}
 
-        ## Current workspace
+        ## Workspace
         {config.WORKSPACE_DIR}
     """).strip()
 
@@ -181,17 +153,17 @@ class SelfEvolvingAgent:
             client_kwargs["base_url"] = config.OPENAI_BASE_URL
 
         self.llm = OpenAI(**client_kwargs)
-        self.short_mem = ShortTermMemory(max_messages=25)
+        self.short_mem = ShortTermMemory(max_messages=80)
         self.long_mem = LongTermMemory()
         self.evolver = Evolver(self.llm, self.long_mem)
         self.planner = Planner(self.llm, context_fn=self.evolver.get_self_prompt_supplement)
         self.executor = Executor()
-        self.executor.set_memory(self.short_mem)
 
 
         # Failure tracking per sub-task for evolution trigger
         self._consecutive_errors: int = 0
         self._error_history: list[str] = []
+        self._last_error_fingerprint: str = ""  # detects genuinely repeated errors
 
     # ── Public API ────────────────────────────────────────────────────────────
     def run(self, goal: str) -> str:
@@ -249,6 +221,7 @@ class SelfEvolvingAgent:
 
             self._consecutive_errors = 0
             self._error_history = []
+            self._last_error_fingerprint = ""
             sub_task_done = False
 
             # ── Inner tool-calling loop ───────────────────────────────────────
@@ -432,7 +405,16 @@ class SelfEvolvingAgent:
                         run_log.log_tool_result(result, is_error=is_error)
 
                         if is_error:
-                            self._consecutive_errors += 1
+                            # Only count as "consecutive" when the SAME error
+                            # repeats (same tool + same first error line).
+                            # Unrelated errors from different tools should not
+                            # accumulate toward the synthesis threshold.
+                            error_fp = f"{fn_name}:{result.splitlines()[0]}"[:100]
+                            if error_fp == self._last_error_fingerprint:
+                                self._consecutive_errors += 1
+                            else:
+                                self._last_error_fingerprint = error_fp
+                                self._consecutive_errors = 1
                             self._error_history.append(f"{fn_name}: {result}")
 
                             # ── Evolve on EVERY error: instant reflection ──────
@@ -452,6 +434,13 @@ class SelfEvolvingAgent:
 
                             # ── Escalate to tool synthesis after N failures ────
                             if self._consecutive_errors >= config.MAX_TOOL_RETRIES:
+                                # Only NOW is the error proven to be persistent —
+                                # worth writing a lesson that will generalise.
+                                self.evolver.ltm.add_lesson(
+                                    f"Tool '{fn_name}' failed {self._consecutive_errors} times "
+                                    f"with: {self._last_error_fingerprint[:80]}. "
+                                    f"Hint that worked: {hint[:120]}"
+                                )
                                 rprint("[magenta]⚡ Escalating to tool synthesis…[/]")
                                 evo_result = self.evolver.maybe_synthesize_tool(
                                     subtask=sub_task,
@@ -462,6 +451,7 @@ class SelfEvolvingAgent:
                                 self._consecutive_errors = 0
                         else:
                             self._consecutive_errors = 0
+                            self._last_error_fingerprint = ""
 
                 # ── Append deferred messages now that all tool calls are resolved
                 for user_msg in deferred_user_messages:
@@ -615,11 +605,29 @@ class SelfEvolvingAgent:
         # OpenAI API rejects with a 400 error.
         messages = self._sanitize_messages(messages)
 
-        return self.llm.chat.completions.create(
-            model=config.MODEL,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=0.3,
-            max_tokens=config.MAX_RESPONSE_TOKENS,
-        )
+        # Retry on transient errors (rate limits, server overload, network blips).
+        # Do NOT retry on 400 Bad Request — those are logic errors that need fixing.
+        _RETRYABLE = ("rate limit", "rate_limit", "429", "529", "500", "502", "503",
+                      "overloaded", "timeout", "timed out", "connection")
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                return self.llm.chat.completions.create(
+                    model=config.MODEL,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    temperature=0.3,
+                    max_tokens=config.MAX_RESPONSE_TOKENS,
+                )
+            except Exception as exc:
+                err_lower = str(exc).lower()
+                if any(sig in err_lower for sig in _RETRYABLE) and attempt < 2:
+                    wait = (attempt + 1) * 4  # 4 s, 8 s
+                    rprint(f"[yellow]⏳ Transient API error (attempt {attempt + 1}/3), "
+                           f"retrying in {wait}s: {str(exc)[:120]}[/]")
+                    time.sleep(wait)
+                    last_exc = exc
+                    continue
+                raise
+        raise last_exc  # type: ignore[misc]

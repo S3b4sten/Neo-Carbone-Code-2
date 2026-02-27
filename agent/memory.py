@@ -13,17 +13,35 @@ import config
 class ShortTermMemory:
     """Sliding-window message store for the LLM conversation."""
 
-    def __init__(self, max_messages: int = 60):
+    def __init__(self, max_messages: int = 80):
         self.max_messages = max_messages
         self._messages: list[dict] = []
 
     def _trim(self) -> None:
-        """Keep the system message and trim oldest non-system messages."""
-        if len(self._messages) > self.max_messages:
-            system = [m for m in self._messages if m.get("role") == "system"]
-            rest = [m for m in self._messages if m.get("role") != "system"]
-            rest = rest[-(self.max_messages - len(system)):]
-            self._messages = system + rest
+        """Keep the system message and trim oldest non-system messages as atomic groups.
+
+        When an assistant message with tool_calls is dropped, its corresponding
+        tool-result messages are also dropped immediately so the list never
+        contains orphaned tool messages.
+        """
+        if len(self._messages) <= self.max_messages:
+            return
+
+        system = [m for m in self._messages if m.get("role") == "system"]
+        rest   = [m for m in self._messages if m.get("role") != "system"]
+        target = self.max_messages - len(system)
+
+        while len(rest) > target and rest:
+            dropped = rest.pop(0)
+            # If we removed an assistant+tool_calls message, cascade-delete its results
+            if dropped.get("role") == "assistant" and dropped.get("tool_calls"):
+                call_ids = {tc["id"] for tc in dropped["tool_calls"]}
+                rest = [
+                    m for m in rest
+                    if not (m.get("role") == "tool" and m.get("tool_call_id") in call_ids)
+                ]
+
+        self._messages = system + rest
 
     def add(self, role: str, content: str | list) -> None:
         self._messages.append({"role": role, "content": content})
@@ -46,30 +64,62 @@ class ShortTermMemory:
         return list(self._messages)
 
     def purge_failed_writes(self) -> int:
-        """Remove write_file tool calls and FAIL reviewer results from history.
+        """Remove broken write attempts and FAIL reviewer results from history.
 
-        When the agent is stuck writing the same broken code, the broken content
-        accumulates in conversation history and the LLM keeps repeating it.
-        This method scrubs those messages so the next attempt starts clean.
+        When the agent is stuck writing the same broken code (via write_file or
+        write_section), that broken content accumulates in conversation history
+        and the LLM keeps reproducing it. This method scrubs all write-related
+        messages so the next attempt starts with a clean slate.
+
+        Strategy:
+        - Find every assistant message that contained a write_file or write_section
+          tool call (the broken code lives in tool_calls[].function.arguments).
+        - Collect all tool_call IDs from those messages for cascading deletion.
+        - Drop those assistant messages, their tool results, and any reviewer FAILs.
 
         Returns the number of messages removed.
         """
+        _WRITE_TOOLS = {"write_file", "write_section"}
+
         before = len(self._messages)
-        keep = []
+
+        # Pass 1: collect call IDs from assistant messages that made write calls
+        purge_call_ids: set[str] = set()
         for msg in self._messages:
-            role = msg.get("role", "")
-            name = msg.get("name", "")
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    if tc.get("function", {}).get("name") in _WRITE_TOOLS:
+                        # Mark ALL call IDs in this assistant message so its
+                        # tool results are also dropped (atomically)
+                        for tc2 in msg["tool_calls"]:
+                            purge_call_ids.add(tc2.get("id", ""))
+                        break
+
+        # Pass 2: rebuild keeping only clean messages
+        keep: list[dict] = []
+        for msg in self._messages:
+            role    = msg.get("role", "")
+            name    = msg.get("name", "")
             content = str(msg.get("content", ""))
 
-            # Drop: write_file tool results (they embed the broken code)
-            if role == "tool" and name == "write_file":
+            # Drop assistant messages whose tool calls included a write tool
+            if role == "assistant" and msg.get("tool_calls"):
+                call_ids = {tc.get("id", "") for tc in msg["tool_calls"]}
+                if call_ids & purge_call_ids:
+                    continue
+
+            # Drop tool results from write tools (success/error feedback)
+            if role == "tool" and name in _WRITE_TOOLS:
                 continue
-            # Drop: reviewer FAIL results (they reference the broken code)
+
+            # Drop any tool result whose parent assistant message was purged
+            if role == "tool" and msg.get("tool_call_id") in purge_call_ids:
+                continue
+
+            # Drop reviewer FAIL results (they reference the broken code)
             if role == "tool" and name == "workspace_code_reviewer" and "VERDICT: FAIL" in content:
                 continue
-            # Drop: assistant messages that contain large code blocks (the broken writes)
-            if role == "assistant" and "write_file" in content and len(content) > 500:
-                continue
+
             keep.append(msg)
 
         removed = before - len(keep)
