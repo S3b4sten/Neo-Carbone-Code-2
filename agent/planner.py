@@ -17,26 +17,29 @@ AVAILABLE TOOLS: shell, python_eval, write_file, read_file, list_dir, pip_instal
                  web_search, http_request, read_url, workspace_code_reviewer, synthesize_tool
 
 PLANNING PRINCIPLES:
-1. Think like Claude or Codex — plan a PROPER, COMPLETE implementation.
-2. Use as many sub-tasks as needed. There is NO LIMIT. A complex game can have 8-12 steps.
-3. Each sub-task should focus on ONE clearly defined concern (e.g. "Implement the game loop",
-   "Add collision detection", "Add score display and game-over screen").
-4. NEVER plan to run GUI programs (pygame, tkinter, etc.) — they block the terminal forever.
-   Instead, plan a "Static review with workspace_code_reviewer" sub-task as the final check.
-5. For non-GUI scripts (CLI tools, data processing etc.), plan a "Run and verify output" sub-task.
-6. Install missing packages as the FIRST sub-task if needed.
-7. NEVER plan to build a file by appending chunks — write the complete file each time.
+1. Keep the plan as short as possible. Use the fewest sub-tasks that produce a correct result.
+2. For a SINGLE-FILE script (utility, CLI tool, simple game logic): write the COMPLETE file in ONE
+   sub-task, then verify in one more. Total: 2-3 sub-tasks maximum.
+3. Only split into more sub-tasks when files are genuinely large (>150 lines) or multi-file projects.
+4. Each sub-task writes the COMPLETE file — never plan incremental "add a function" passes on the
+   same file, because each pass rewrites from scratch and wastes time.
+5. NEVER plan to run GUI programs (pygame, tkinter, etc.) — they block the terminal forever.
+   Instead, use a "Static review with workspace_code_reviewer" sub-task as the final check.
+6. For non-GUI scripts (CLI tools, data processing etc.), plan a "Run and verify output" sub-task.
+7. Install missing packages as the FIRST sub-task if needed.
 8. For multi-file projects, plan one sub-task per file, then a review sub-task at the end.
 
 EXAMPLE plan for "make a flappy bird game in pygame":
 [
   "Install pygame with pip_install",
-  "Write flappy_bird.py: initialize pygame, define constants (gravity, jump speed, screen size)",
-  "Add the Bird class with gravity, jump, and draw methods",
-  "Add the Pipe class with scrolling movement and random gap positions",
-  "Implement the main game loop: event handling, physics update, collision detection, score display",
-  "Add game-over screen with score and restart on key press",
+  "Write complete flappy_bird.py: Bird class, Pipe class, game loop, collision, score, game-over screen",
   "Static review: call workspace_code_reviewer on flappy_bird.py to verify all required patterns are present"
+]
+
+EXAMPLE plan for "write a christmas tree script":
+[
+  "Write complete christmas_tree.py: tree and trunk functions, input validation, main function",
+  "Run and verify: execute christmas_tree.py and check output"
 ]
 
 CONTEXT (lessons learned and synthesized tools available):
